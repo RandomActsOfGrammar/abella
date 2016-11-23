@@ -1390,6 +1390,9 @@ let rec get_body_clauses trm =
   if (is_imp trm) then
     let left, right = extract_imp trm in
     left::(get_body_clauses right)
+  else if (is_pi trm) then
+    let abs = extract_pi trm in
+    get_body_clauses abs
   else
     [] (*Reached end of body*)
 
@@ -1397,9 +1400,9 @@ type set_ref =
   | Ref of id
   | Formula of term
 
-let pred_list : string list ref = State.rref []
+let pred_list : string list ref = ref []
 
-let dynamic_contexts : (id, term list) H.t = H.create 10 (*default length?*)
+let dynamic_contexts : (id, term list) H.t = H.create 10
 
 let dependencies : (id, id list) H.t = H.create 10
 
@@ -1409,32 +1412,26 @@ let collect_contexts () =
   let gamma' = ref !clauses in
 
   let rec simplify_constraints cnstrnts output =
-    let rec initialize_output p_list =
-      match p_list with
-      | [] -> ()
-      | h::t -> H.add output h []; initialize_output t
-                                                     
-    in
     let rec add_formulas lst pred =
       match lst with
       | [] -> false
       | h::t ->
          match h with
          | Formula trm ->
-            if not (List.mem trm (H.find output pred)) then (*Equality of terms?*)
+            if not (List.mem trm (H.find output pred)) then (*Equality of formulas?*)
               let _ = H.replace output pred (trm::(H.find output pred)) in
               let _ = add_formulas t in
               true
             else
               add_formulas t pred
          | Ref s -> add_formulas ((H.find cnstrnts s) @ t) pred
-                                 
+
     in
     let rec simplify_iterate lst changed =
       match lst with
       | [] -> changed
       | h::t -> simplify_iterate t (add_formulas (H.find cnstrnts h) h)
-                                 
+
     in
     let rec simplify_aux () =
       if (simplify_iterate !pred_list false) then
@@ -1443,7 +1440,7 @@ let collect_contexts () =
         ()
 
     in
-    initialize_output !pred_list;
+    List.iter (fun h -> H.add output h []) !pred_list;
     simplify_aux ()
 
   in
