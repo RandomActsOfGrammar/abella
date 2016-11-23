@@ -156,8 +156,14 @@ let normalize_sequent () =
 
 let clauses : clause list ref = State.rref []
 
+                                           
+let rec f l =
+  match l with
+  | [] -> ()
+  | h::t -> print_string ((term_to_string h) ^ "\n"); print_string ((printing_stuff h) ^ "\n\n"); f t
+
 let add_clauses new_clauses =
-  clauses := !clauses @ new_clauses
+  clauses := !clauses @ new_clauses; f !clauses
 
 let parse_defs ?(sign = !sign) str =
   Lexing.from_string str |>
@@ -1357,3 +1363,116 @@ let cut_from ?name h arg term =
       add_hyp ?name (object_cut_from obj_h1 obj_h2 term)
   | _,_ -> failwith "The cut command can only be used on \
                    \ hypotheses of the form {...}"
+
+
+
+(* Independence *)
+
+type set_ref =
+  | Ref of id
+  | Formula of term
+
+let rec simplify_constraints cnstrnts output =
+  let pred_list = H.fold (fun p tlst lst -> p::lst) cnstrnts [] in
+
+  let rec initialize_output p_list =
+    match p_list with
+    | [] -> ()
+    | h::t -> H.add output h []; initialize_output t
+
+  in
+  let rec add_formulas lst pred =
+    match lst with
+    | [] -> false
+    | h::t ->
+       match h with
+       | Formula trm ->
+          if not (List.mem trm (H.find output pred)) then (*Equality of terms?*)
+            let _ = H.replace output pred (trm::(H.find output pred)) in
+            let _ = add_formulas t in
+            true
+          else
+            add_formulas t pred
+       | Ref s -> add_formulas ((H.find cnstrnts s) @ t) pred
+
+  in
+  let rec simplify_iterate lst changed =
+    match lst with
+    | [] -> changed
+    | h::t -> simplify_iterate t (add_formulas (H.find cnstrnts h) h)
+
+  in
+  let rec simplify_aux () =
+    if (simplify_iterate pred_list false) then
+      simplify_aux ()
+    else
+      ()
+
+  in
+  initialize_output pred_list;
+  simplify_aux ()
+
+let dynamic_contexts : (id, term list) H.t = H.create 10 (*default length?*)
+
+let collect_contexts () =
+  let ctx_col = H.create 10 in
+  let gamma' = ref !clauses in
+
+  let rec get_head_predicate trm =
+    match (observe trm) with
+    | Var v -> [var_to_string v] (*May or may not give what I want*)
+    | App (t, tlst) ->
+       if (is_imp trm) then
+         let left, right = extract_imp trm in
+         get_head_predicate right
+       else if (is_amp trm) then
+         let left, right = extract_amp trm in
+         (get_head_predicate left) @ (get_head_predicate right)
+       else if (is_pi trm) then
+         let abs = extract_pi trm in
+         get_head_predicate abs
+       else
+         get_head_predicate t
+    | Lam (tctx, t) -> get_head_predicate t
+    | _ -> (*This should not happen in well-formed clauses.  What do I do?*) ["I don't know"]
+
+  in
+  let rec get_body_clauses trm =
+    if (is_imp trm) then
+      let left, right = extract_imp trm in
+      left::(get_body_clauses right)
+    else
+      [] (*Reached end of body*)
+
+  in
+  let add_constraints trm =
+    let head_pred_trm = get_head_predicate trm in
+    let body_trm = get_body_clauses trm in
+    let rec go_through_body body =
+      match body with
+      | [] -> ()
+      | g_i::t ->
+         let hp_g_i = get_head_predicate g_i in
+         let body_g_i = get_body_clauses g_i in
+         let _ = go_through_body t in
+         let _ = gamma' := body_g_i @ !gamma' in
+         if H.mem ctx_col hp_g_i then
+           H.replace ctx_col hp_g_i ((List.map (fun p -> Ref p) head_pred_trm) @
+                                       (List.map (fun t -> Formula t) body_g_i) @
+                                       (H.find ctx_col hp_g_i))
+         else
+           H.add ctx_col hp_g_i ((List.map (fun p -> Ref p)  head_pred_trm) @
+                                   (List.map (fun t -> Formula t) body_g_i))
+    in go_through_body body_trm
+
+  in
+  while !gamma' <> [] do
+    match !gamma' with
+    | h::t -> gamma' := t; add_constraints h
+    | [] -> ()
+  done;
+
+  simplify_constraints !gamma' dynamic_contexts
+
+
+
