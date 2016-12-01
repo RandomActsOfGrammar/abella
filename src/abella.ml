@@ -29,6 +29,8 @@ open Extensions
 open Printf
 open Accumulate
 
+open Independence
+
 let load_path = State.rref (Sys.getcwd ())
 
 let normalize_filename ?(wrt = !load_path) fn =
@@ -123,7 +125,10 @@ let read_specification name =
   (* Any exceptions must have been thrown by now - do actual assignments *)
   sr := sr' ;
   sign := sign' ;
-  add_clauses clauses'
+  add_clauses clauses';
+  collect_contexts ();
+  collect_dependencies ();
+  independent "p" "r"
 
 
 (* Compilation and importing *)
