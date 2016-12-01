@@ -687,3 +687,28 @@ let extract_pi t =
   match observe (hnorm t) with
     | App(t, [abs]) -> abs
     | _ -> bugf "Check is_pi before calling extract_pi"
+
+
+
+
+
+
+
+
+
+
+let rec printing_stuff t =
+  match t with
+  | Var v -> v.name
+  | DB i -> "DB " ^ (string_of_int i)
+  | Lam (tctx, trm) -> "Lambda (" ^ (printing_stuff trm) ^ ")"
+  | App (trm, tl) -> (match tl with
+                     | [] -> "App (" ^ (printing_stuff trm) ^ ")"
+                     | [h] -> "App (" ^ (printing_stuff trm) ^ ", [" ^ (printing_stuff h) ^ "])"
+                     | a::b::[] -> "App (" ^ (printing_stuff trm) ^ ", [" ^ (printing_stuff a) ^ "; " ^ (printing_stuff b) ^ "])"
+                     | _ -> "Long App")
+  | Susp (a,b,c,d) -> "Suspension"
+  | Ptr p -> (match !p with
+              | V v -> v.name
+              | T t -> printing_stuff t
+             )

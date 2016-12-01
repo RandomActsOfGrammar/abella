@@ -191,3 +191,12 @@ val extract_amp : term -> term * term
 val is_pi : term -> bool
 val extract_pi : term -> term
 
+
+
+
+
+
+
+
+
+val printing_stuff : term -> string

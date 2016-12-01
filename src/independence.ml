@@ -269,7 +269,7 @@ let independent f g =
     "ctx_" ^ pred
 
   in
-  let make_subctx_name pred_super pred_sub =
+  let make_subctx_name pred_sub pred_super =
     (make_ctx_name pred_sub) ^ "_subctx_" ^ (make_ctx_name pred_super)
 
   in
