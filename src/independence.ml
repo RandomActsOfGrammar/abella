@@ -30,48 +30,38 @@ let rec get_head_predicate trm =
   | Lam (tctx, t) -> get_head_predicate t
   | _ -> failwith "Invalid clause found in determining head predicate"
 
-let rec get_body_clauses trm =
-  match (observe trm) with
-  | App (t, tlist) ->
-     if (is_imp trm) then
-       let left, right = extract_imp trm in
-       left::(get_body_clauses right)
-     else if (is_pi trm) then
-       let abs = extract_pi trm in
-       get_body_clauses abs
-     else
-       [] (*Reached end of body*)
-  | Lam (tctx, t) -> get_body_clauses t
-  | _ -> []
-
-let rec term_eq t1 t2 =
-  match (observe t1), (observe t2) with
-  | Var v1, Var v2 -> (var_to_string v1) = (var_to_string v2)
-  | App (p1, l1), App (p2, l2) ->
-     if ((is_imp t1) && (is_imp t2)) then
-       let left1, right1 = extract_imp t1 in
-       let left2, right2 = extract_imp t2 in
-       (term_eq left1 left2) && (term_eq right1 right2)
-     else if ((is_amp t1) && (is_amp t2)) then
-       let left1, right1 = extract_amp t1 in
-       let left2, right2 = extract_amp t2 in
-       (term_eq left1 left2) && (term_eq right1 right2)
-     else if ((is_pi t1) && (is_pi t2)) then
-       let abs1 = extract_pi t1 in
-       let abs2 = extract_pi t2 in
-       term_eq abs1 abs2
-     else
-       term_eq p1 p2
-  | Lam (tctx1, trm1), Lam (tctx2, trm2) -> term_eq trm1 trm2
-  | DB i, DB j -> true
-  | Susp (trm1, i1, j1, env1), Susp (trm2, i2, j2, evn2) -> term_eq trm1 trm2
-  | _ -> failwith "Ptr still in term after observer"
+let get_body_clauses trm =
+  let rec replace_lambdas tctx t =
+    match (observe t) with
+    | Var v -> t
+    | DB i ->
+       let id,ty = List.nth tctx (i-1) in
+       var Eigen id 0 ty (*Eigen and 0 placeholders for now*)
+    | Lam (ctx, tm) -> replace_lambdas (ctx@tctx) tm
+    | App (tm, tlst) -> app (replace_lambdas tctx tm) (List.map (fun a -> replace_lambdas tctx a) tlst)
+    | _ -> assert false
+  in
+  let rec build_body_clause_lst trm =
+    match (observe trm) with
+    | App (t, tlist) ->
+       if (is_imp trm) then
+         let left, right = extract_imp trm in
+         left::(build_body_clause_lst right)
+       else if (is_pi trm) then
+         let abs = extract_pi trm in
+         build_body_clause_lst abs
+       else
+         [] (*Reached end of body*)
+    | Lam (tctx, t) -> build_body_clause_lst (replace_lambdas tctx t)
+    | _ -> []
+  in
+  build_body_clause_lst trm
 
 let rec member trm lst =
   match lst with
   | [] -> false
   | h::t ->
-     if (term_eq trm h) then
+     if (eq trm h) then
        true
      else
        member trm t
@@ -181,7 +171,7 @@ let collect_contexts () =
       ) ctx_col []
 
   in pred_list := extract_all_predicates ();
-  simplify_constraints ctx_col dynamic_contexts
+     simplify_constraints ctx_col dynamic_contexts
   (*display all predicates in pred_list -- testing purposes only*)
   (*;print_string "Predicates\n";
   List.iter (fun p -> print_string (p ^ "; ")) !pred_list;
@@ -273,25 +263,50 @@ let independent f g =
     (make_ctx_name pred_sub) ^ "_subctx_" ^ (make_ctx_name pred_super)
 
   in
+  let rec make_variables_universal trm =
+      match (observe trm) with
+      | Var v -> if (v.tag = Constant) then
+                   trm
+                 else
+                   var v.tag (String.uppercase v.name) v.ts v.ty
+      | App (t, tlist) -> app (make_variables_universal t) (List.map make_variables_universal tlist)
+      | _ -> trm
+
+  in
+  let rec collect_quantified_variables trm =
+      match (observe trm) with
+      | Var v -> if (v.tag = Constant) then
+                   []
+                 else
+                   [v.name]
+      | App (t, tlist) ->
+         (collect_quantified_variables t) @ (List.fold_right (fun tm lst -> (collect_quantified_variables tm) @ lst) tlist [])
+      | _ -> []
+
+  in
   let define_ctx pred =
     let ctx_formulas = H.find dynamic_contexts pred in
     let ctx_name = make_ctx_name pred in
     let rec add_formula form_lst def_str =
       match form_lst with
       | [] -> def_str ^ ".\n\n"
-      | h::t -> (*TODO--do checking/replacing to remove names L, E; ensure variable names are capitalized*)
-         let new_def = def_str ^ ";\n\t" ^ ctx_name ^ " ((" ^ (term_to_string h) ^ ") :: L) := " ^ ctx_name ^ " L" in
+      | h::t -> (*TODO--do checking/replacing to remove names L, E*)
+         let new_def = def_str ^ ";\n\t" ^ ctx_name ^ " ((" ^ (term_to_string (make_variables_universal h)) ^ ") :: L) := " ^ ctx_name ^ " L" in
          add_formula t new_def
     in
     let rec add_proof_step form_lst thm_str prf_str =
       match form_lst with
       | [] -> thm_str ^ prf_str ^ "\n\n"
       | [h] ->
-         let new_thm = thm_str ^ "E = (" ^ (term_to_string h) ^ ").\n" in
+         let quant_vars = collect_quantified_variables h in
+         let quantifications = List.fold_right (fun x s -> s ^ "exists " ^ x ^ ", ") quant_vars "" in
+         let new_thm = thm_str ^ quantifications ^ "E = (" ^ (term_to_string h) ^ ").\n" in
          let new_prf = prf_str ^ "\n\tcase H2. search. apply IH to H3 H4. search." in
          add_proof_step [] new_thm new_prf
       | h::t -> (*TODO--capitalizing variable names, adding exists for variables*)
-         let new_thm = thm_str ^ "E = (" ^ (term_to_string h) ^ ") \\/" in
+         let quant_vars = collect_quantified_variables h in
+         let quantifications = List.fold_right (fun x s -> s ^ "exists " ^ x ^ ", ") quant_vars "" in
+         let new_thm = thm_str ^ quantifications ^ "E = (" ^ (term_to_string h) ^ ") \\/" in
            let new_prf = prf_str ^ "\n\tcase H2. search. apply IH to H3 H4. search." in
          add_proof_step t new_thm new_prf
     in
